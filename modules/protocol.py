@@ -198,65 +198,53 @@ def parse_fixed_ligand_input(input_object, chains):
 
 def build_crop(dataloader, input_object, chains, obmol, fixed_ligands):
     """
-    Generates a set of cropped atoms.
-    If CDR residues are provided, the crop is centered on ALL CDR atoms
-    (multi-center crop) to support simultaneous sampling of all CDRs.
+    Generates a set of cropped atoms centered around ligands.
+    Antibody override: if CDR residues are provided, crop is centered
+    on ALL CDR atoms across all specified chains.
     """
 
-    # ============================================================
-    # CDR MULTI-CENTER CROP OVERRIDE
-    # ============================================================
-    if hasattr(input_object, "cdr_residues") and input_object.cdr_residues():
-        print("CDR crop override active")
+    # ======================================================================
+    # CDR ENSEMBLE OVERRIDE
+    # ======================================================================
+    if hasattr(input_object, "cdr_residues") and input_object.cdr_residues() is not None:
 
         cdr_atoms = []
+        cdr_chains = []
 
         for ch, resnums in input_object.cdr_residues().items():
             if ch not in chains:
-                print(f"Warning: chain {ch} not found in structure")
                 continue
 
-            for at_key in chains[ch].atoms:
+            for at in chains[ch].atoms:
                 try:
-                    resnum = int(at_key[1])
+                    resno = int(at[1])
                 except ValueError:
                     continue
 
-                if resnum in resnums:
-                    atom = chains[ch].atoms[at_key]
+                if resno in resnums:
+                    atom = chains[ch].atoms[at]
                     if atom.element > 1 and atom.occ != 0:
                         cdr_atoms.append(atom)
+                        if ch not in cdr_chains:
+                            cdr_chains.append(ch)
 
-        print("Total CDR atoms used as crop centers:", len(cdr_atoms))
-        print("Chains contributing CDRs:", list(input_object.cdr_residues().keys()))
+        if len(cdr_atoms) > 0:
+            print("CDR crop override active")
+            print(f"Total CDR atoms used as crop centers: {len(cdr_atoms)}")
+            print(f"Chains contributing CDRs: {cdr_chains}")
 
-        if len(cdr_atoms) == 0:
-            sys.exit("ERROR: CDR override requested but no CDR atoms were found")
+            # IMPORTANT: get_crop() takes ONLY (chains, centers)
+            cropped_atoms = dataloader.dataset.dataset.get_crop(
+                chains,
+                cdr_atoms
+            )
 
-        # Perform multi-center crop
-        cropped_atoms = dataloader.dataset.dataset.get_crop(
-            chains,
-            cdr_atoms,
-            exclude=fixed_ligands
-        )
+            # center returned for bookkeeping only
+            return cropped_atoms, cdr_atoms
 
-        print("Total atoms in cropped region:", len(cropped_atoms))
-
-        # Hard sanity checks
-        if len(cropped_atoms) < 500:
-            print("WARNING: Crop is very small; check CDR definitions or numbering")
-
-        if hasattr(dataloader.dataset.dataset, "params"):
-            maxatoms = dataloader.dataset.dataset.params.get("maxatoms", None)
-            if maxatoms is not None and len(cropped_atoms) > maxatoms:
-                print("WARNING: Crop exceeds maxatoms")
-
-        return cropped_atoms, cdr_atoms
-
-    # ============================================================
-    # ORIGINAL PLACER LOGIC BELOW (UNCHANGED)
-    # ============================================================
-
+    # ======================================================================
+    # DEFAULT PLACER LOGIC (UNCHANGED)
+    # ======================================================================
     user_defined_center = False
     if input_object.corruption_centers() is not None or input_object.crop_centers() is not None:
         user_defined_center = True
@@ -270,9 +258,9 @@ def build_crop(dataloader, input_object, chains, obmol, fixed_ligands):
         )
 
     elif (
-        input_object.cif() is not None or
-        (input_object.pdb() is not None and input_object.target_res() is not None) or
-        (input_object.pdb() is not None and user_defined_center is True)
+        input_object.cif() is not None
+        or (input_object.pdb() is not None and input_object.target_res() is not None)
+        or (input_object.pdb() is not None and user_defined_center is True)
     ):
         skip_chains = [ch for ch in chains if chains[ch].type != "nonpoly"]
         _fixed_ligands = []
@@ -314,27 +302,24 @@ def build_crop(dataloader, input_object, chains, obmol, fixed_ligands):
             for lig in ligands_to_predict:
                 if input_object.crop_centers() is not None:
                     random_center = random.choice(input_object.crop_centers())
-                else:
+                elif input_object.corruption_centers() is not None:
                     random_center = random.choice(input_object.corruption_centers())
 
                 _lig_atoms = []
-                for ch in chains:
-                    if ch != lig[0]:
-                        continue
-                    for at in chains[ch].atoms:
-                        atom = chains[ch].atoms[at]
-                        if atom.occ == 0 or atom.element <= 1:
-                            continue
-                        if (ch, at[2], int(at[1])) == lig:
+                for at in chains[lig[0]].atoms:
+                    atom = chains[lig[0]].atoms[at]
+                    if atom.occ != 0 and atom.element > 1:
+                        if (lig[0], at[2], int(at[1])) == lig:
                             _lig_atoms.append(atom)
 
-                center.append(random.choice(_lig_atoms))
+                if len(_lig_atoms) > 0:
+                    center.append(random.choice(_lig_atoms))
 
         cropped_atoms = dataloader.dataset.dataset.get_crop(chains, center)
-    else:
-        sys.exit("build_crop :: No valid input provided")
 
-    print("Total atoms in cropped region:", len(cropped_atoms))
+    else:
+        sys.exit("build_crop :: No valid input provided.")
+
     return cropped_atoms, center
 
 
