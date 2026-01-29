@@ -78,7 +78,14 @@ class PLACER():
             self.__CCD_DB = json.load(lgnds)
 
         ## Storage of user inputs
-        self.__fixed_ligand_noise = self.__params['DATALOADER']['featurizer']['sigma_bb']  # this can be changed through PLACERinput
+        #self.__fixed_ligand_noise = self.__params['DATALOADER']['featurizer']['sigma_bb'] 
+        # this can be changed through PLACERinput
+        # If CDR residues are provided, set backbone corruption to 0
+        if hasattr(self, "_PLACER__params") and 'cdr_residues' in self.__params.get('DATALOADER', {}).get('featurizer', {}):
+            self.__fixed_ligand_noise = 0.0
+        else:
+            self.__fixed_ligand_noise = self.__params['DATALOADER']['featurizer']['sigma_bb']
+
         self.__verbose = True
 
         self.__Losses = losses.StructureLossesPDB(terms=["fape", "lddt", "rmsd", "kabsch"],
