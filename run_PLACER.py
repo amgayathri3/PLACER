@@ -7,7 +7,7 @@ import time
 import glob
 import argparse
 import json
-import torch
+import pandas as pd
 from openbabel import openbabel
 openbabel.obErrorLog.SetOutputLevel(0)
 
@@ -138,11 +138,12 @@ def main(args):
 
 
     ########################################################
-    # 3. Generate models
+    # 3. Generate models with CDR stats logging
     ########################################################
     tic = time.time()
-    for fname in fnames:
+    stats_list = []
 
+    for fname in fnames:
         label = os.path.basename(fname)
         for ext in [".cif.gz", ".cif", ".pdb"]:
             if label.endswith(ext):
@@ -169,10 +170,22 @@ def main(args):
         else:
             sigma_bb = placer._PLACER__params.get('sigma_bb', 1.0)
 
-        # Optional: print CDR vs fixed counts
+        # --- Compute per-chain CDR/fixed stats ---
         try:
-            ligands_in_chains, fixed_ligands = PLACER.utils.parse_fixed_ligand_input(placer_input_iter, placer_input_iter.chains)
-            print(f"{label}: Predicting {len(ligands_in_chains)} CDR residues; fixing {len(fixed_ligands)} residues")
+            chain_stats = []
+            chains = placer_input_iter.chains
+            for ch in chains:
+                cdr_count = len(placer_input_iter.cdr_residues().get(ch, []))
+                fixed_count = len(placer_input_iter.fixed_ligand() or [])
+                chain_stats.append({
+                    "label": label,
+                    "chain": ch,
+                    "cdr_residues": cdr_count,
+                    "fixed_residues": fixed_count
+                })
+            stats_list.extend(chain_stats)
+            # Print summary
+            print(f"{label}: " + " | ".join([f"{s['chain']} - CDR:{s['cdr_residues']} Fixed:{s['fixed_residues']}" for s in chain_stats]))
         except Exception:
             pass
 
@@ -182,6 +195,13 @@ def main(args):
         # Save outputs
         os.makedirs(args.odir, exist_ok=True)
         PLACER.protocol.dump_output(output_dict=outputs, filename=outfile_prefix, rerank=args.rerank)
+
+    # --- Save stats to CSV ---
+    if args.stats_csv:
+        os.makedirs(os.path.dirname(args.stats_csv), exist_ok=True)
+        df_stats = pd.DataFrame(stats_list)
+        df_stats.to_csv(args.stats_csv, index=False)
+        print(f"Saved per-chain CDR/fixed stats to {args.stats_csv}")
 
     print(f"Finished predicting {len(fnames)} structures in {(time.time() - tic):.2f} seconds.")
 
@@ -215,6 +235,7 @@ if __name__ == "__main__":
     parser.add_argument('--maxatoms', type=int)
     parser.add_argument('--ligand_file', nargs="+", type=str)
     parser.add_argument('--rerank', type=str, choices=rank_options)
+    parser.add_argument('--stats_csv', type=str, help='CSV file to save per-chain CDR/fixed statistics')
 
     args = parser.parse_args()
     main(args)
