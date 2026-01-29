@@ -212,9 +212,18 @@ def main(args):
         elif fname.endswith(".cif") or fname.endswith(".cif.gz"):
             placer_input_iter.cif(fname)
 
+        # ---- BEGIN: CDR mode backbone noise adjustment ----
+        if hasattr(placer_input_iter, 'cdr_residues') and placer_input_iter.cdr_residues() is not None:
+    # Disable backbone corruption for framework/antigen residues
+                sigma_bb = 0.0
+        else:
+    # Use default sigma_bb
+                sigma_bb = placer._PLACER__params.get('sigma_bb', 1.0)  # fallback if not in params
+# ---- END ----
+
 
         # execute PLACER
-        outputs = placer.run(placer_input_iter, args.nsamples)
+        outputs = placer.run(placer_input_iter, args.nsamples, sigma_bb=sigma_bb)
 
         # Rank the outputs based on a user-defined metric
         # if args.rerank is not None:
