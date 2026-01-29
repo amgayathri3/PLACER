@@ -1,15 +1,13 @@
+#!/usr/bin/env python3
+
 import sys, os
 import warnings
 warnings.filterwarnings("ignore")
 import time
 import glob
-import itertools
 import argparse
-import numpy as np
-import pandas as pd
-import itertools
-import torch
 import json
+import torch
 from openbabel import openbabel
 openbabel.obErrorLog.SetOutputLevel(0)
 
@@ -19,15 +17,11 @@ import PLACER
 import modules.cdr_utils as cdr_utils
 
 
-
 def main(args):
     ########################################################
-    # 0. load the network
+    # 0. Load the network
     ########################################################
-    DIR = os.path.dirname(__file__)
-    weightsfile = args.weights
-
-    placer = PLACER.PLACER(weightsfile)
+    placer = PLACER.PLACER(args.weights)
     if args.maxatoms is not None:
         placer._PLACER__params['DATALOADER']['featurizer']['maxatoms'] = args.maxatoms
     try:
@@ -37,75 +31,65 @@ def main(args):
         print("Crop size: default")
 
 
-
     ########################################################
-    # 1. setup
+    # 1. Gather input files
     ########################################################
-
     if args.idir is not None:
-        fnames = glob.glob(args.idir+'/*.pdb')
-        if len(fnames)<1:
-            sys.exit("Error: no .pdb files found in '%s'"%(args.idir))
-
+        fnames = glob.glob(os.path.join(args.idir, '*.pdb'))
+        if len(fnames) < 1:
+            sys.exit(f"Error: no .pdb files found in '{args.idir}'")
     elif args.ifile is not None:
         if any([args.ifile.endswith(ext) for ext in ['.pdb', '.ent', '.cif', '.cif.gz']]):
             fnames = [args.ifile]
         else:
             with open(args.ifile) as f:
                 fnames = [line.strip() for line in f.readlines()]
-            if len(fnames)<1:
-                sys.exit("Error: no .pdb files found in '%s'"%(args.ifile))
+            if len(fnames) < 1:
+                sys.exit(f"Error: no .pdb files found in '{args.ifile}'")
+    else:
+        sys.exit("Error: One of -i/--idir or -f/--ifile must be provided.")
 
-    print("# number of PDB files to process: %d"%(len(fnames)))
+    print(f"# number of PDB files to process: {len(fnames)}")
 
 
-    ######################################################################
-    # 1. Parsing user input arguments and adding them to the input object
-    ######################################################################
+    ########################################################
+    # 2. Parse input arguments into PLACER input object
+    ########################################################
     placer_input = PLACER.PLACERinput()
 
-    if args.exclude_common_ligands is True:
+    if args.exclude_common_ligands:
         placer_input.skip_ligands(PLACER.utils.get_common_ligands())
 
     if args.ligand_file is not None:
-        ligand_ref = {}
-        for lr in args.ligand_file:
-            ligand_ref[lr.split(":")[0]] = lr.split(":")[1]
+        ligand_ref = {lr.split(":")[0]: lr.split(":")[1] for lr in args.ligand_file}
         placer_input.ligand_reference(ligand_ref)
 
-    if args.ignore_ligand_hydrogens is True:
+    if args.ignore_ligand_hydrogens:
         placer_input.ignore_ligand_hydrogens(True)
 
-    if args.use_sm is False:
+    if not args.use_sm:
         placer_input.exclude_sm(True)
 
     if args.poly_ligand_chains is not None:
         placer_input.poly_ligand_chains(args.poly_ligand_chains)
-    
+
     if args.fixed_ligand_noise is not None:
         placer_input.fixed_ligand_noise(args.fixed_ligand_noise)
-
-    if args.poly_ligand_chains is not None:
-        placer_input.poly_ligand_chains(args.poly_ligand_chains)
 
     if args.cdr_file is not None:
         cdr_def = cdr_utils.parse_cdr_definition(args.cdr_file)
         placer_input.cdr_residues(cdr_def)
-    if args.idir is None and args.ifile is None:
-        sys.exit('Error: One of -i/--idir or -f/--ifile must be provided.')
-    
+
     def evaluate_pred_fix_ligand_input(ligands):
         fixed_ligands = []
         for lig in ligands:
-            if "-" in lig:
-                if len(lig.split("-")) == 2:
-                    fixed_ligands.append((lig.split("-")[0], int(lig.split("-")[1])))
-                elif len(lig.split("-")) == 3:
-                    fixed_ligands.append((lig.split("-")[0], lig.split("-")[1], int(lig.split("-")[2])))
-                else:
-                    sys.exit(f"Invalid fixed/predict ligand input: {lig}")
+            parts = lig.split("-")
+            if len(parts) == 2:
+                fixed_ligands.append((parts[0], int(parts[1])))
+            elif len(parts) == 3:
+                fixed_ligands.append((parts[0], parts[1], int(parts[2])))
             else:
-                fixed_ligands.append(lig)
+                sys.exit(f"Invalid fixed/predict ligand input: {lig}")
         return fixed_ligands
 
     if args.fixed_ligand is not None:
@@ -114,7 +98,7 @@ def main(args):
     if args.predict_ligand is not None:
         placer_input.predict_ligand(evaluate_pred_fix_ligand_input(args.predict_ligand))
 
-    if args.predict_multi is True:
+    if args.predict_multi:
         placer_input.predict_multi(True)
 
     if args.target_res is not None:
@@ -125,29 +109,19 @@ def main(args):
             placer_input.target_res((target_res[0], int(target_res[1]), target_res[2]))
 
     if args.bonds is not None:
-        # user input: "A-42-ALA-CB:B-173-JRP-CL:bondlen"
-        # API input: [(ch, resno, name3, atomname), (ch, resno, name3, atomname), bondlen]
         bonds = []
         for bond in args.bonds:
-            a,b,bondlen = bond.split(':')
-            a,b = a.split('-'),b.split('-')
-            aname = (a[0],int(a[1]),a[2],a[3])
-            bname = (b[0],int(b[1]),b[2],b[3])
-            bonds.append([aname, bname, float(bondlen)])
+            a, b, bondlen = bond.split(':')
+            a, b = a.split('-'), b.split('-')
+            bonds.append([(a[0], int(a[1]), a[2], a[3]), (b[0], int(b[1]), b[2], b[3]), float(bondlen)])
         placer_input.bonds(bonds)
 
     if args.mutate is not None:
-        # user input: 5A:TRP,6A:GLY
-        # API input: {("A", 5): "TRP", ("A", 6): "GLY"}
         mutate_dict = {}
         for mutres in args.mutate:
-            pos,resn = mutres.split(':')
-            resno = ""
-            n = 0
-            while pos[n].isnumeric():
-                resno += pos[n]
-                n += 1
-            chain = pos[n:]
+            pos, resn = mutres.split(':')
+            resno = "".join([c for c in pos if c.isdigit()])
+            chain = pos[len(resno):]
             mutate_dict[(chain, int(resno))] = resn
         placer_input.mutate(mutate_dict)
 
@@ -155,161 +129,92 @@ def main(args):
         placer_input.add_custom_residues(json.load(open(args.residue_json)))
 
     if args.crop_centers is not None:
-        # Only accepting atom names from commandline.
-        # Use API to provide coordinates.
-        _centers = []
-        for cntr in args.crop_centers:
-            _cntr = cntr.split("-")
-            assert len(_cntr) == 4
-            _centers.append((_cntr[0], int(_cntr[1]), _cntr[2], _cntr[3]))
+        _centers = [(c.split("-")[0], int(c.split("-")[1]), c.split("-")[2], c.split("-")[3]) for c in args.crop_centers]
         placer_input.crop_centers(_centers)
 
     if args.corruption_centers is not None:
-        # Only accepting atom names from commandline.
-        # Use API to provide coordinates.
-        _centers = []
-        for cntr in args.corruption_centers:
-            _cntr = cntr.split("-")
-            assert len(_cntr) == 4
-            _centers.append((_cntr[0], int(_cntr[1]), _cntr[2], _cntr[3]))
+        _centers = [(c.split("-")[0], int(c.split("-")[1]), c.split("-")[2], c.split("-")[3]) for c in args.corruption_centers]
         placer_input.corruption_centers(_centers)
 
 
     ########################################################
-    # 2. generate models
+    # 3. Generate models
     ########################################################
     tic = time.time()
+    for fname in fnames:
 
-    for counter,fname in enumerate(fnames):
-
-        if ".cif.gz" in os.path.basename(fname):
-            label = os.path.basename(fname).replace(".cif.gz", "")
-        elif ".cif" in os.path.basename(fname):
-            label = os.path.basename(fname).replace(".cif", "")
-        elif ".pdb" in os.path.basename(fname):
-            label = os.path.basename(fname).replace(".pdb", "")
-        if args.suffix is not None:
+        label = os.path.basename(fname)
+        for ext in [".cif.gz", ".cif", ".pdb"]:
+            if label.endswith(ext):
+                label = label.replace(ext, "")
+        if args.suffix:
             label += f"_{args.suffix}"
 
-        outfile_prefix = args.odir + "/" + label
-
-        # ocsv = args.ocsv
-        # if ocsv is None:
-        #     ocsv = args.odir+'/'+label+'.csv'
-
-        # If output exists then skipping this task
-        if args.cautious is True:
-            if os.path.exists(outfile_prefix+".csv"):
-                print(f"{outfile_prefix}.csv already exists, skipping this prediction.")
-                continue
+        outfile_prefix = os.path.join(args.odir, label)
+        if args.cautious and os.path.exists(outfile_prefix + ".csv"):
+            print(f"{outfile_prefix}.csv already exists, skipping.")
+            continue
 
         placer_input_iter = placer_input.copy()
-
         placer_input_iter.name(label)
 
         if fname.endswith(".pdb"):
             placer_input_iter.pdb(fname)
-        elif fname.endswith(".cif") or fname.endswith(".cif.gz"):
+        else:
             placer_input_iter.cif(fname)
 
-        # ---- BEGIN: CDR mode backbone noise adjustment ----
+        # --- CDR mode: disable backbone noise for non-CDR residues ---
         if hasattr(placer_input_iter, 'cdr_residues') and placer_input_iter.cdr_residues() is not None:
-    # Disable backbone corruption for framework/antigen residues
-                sigma_bb = 0.0
+            sigma_bb = 0.0
         else:
-    # Use default sigma_bb
-                sigma_bb = placer._PLACER__params.get('sigma_bb', 1.0)  # fallback if not in params
-# ---- END ----
+            sigma_bb = placer._PLACER__params.get('sigma_bb', 1.0)
 
+        # Optional: print CDR vs fixed counts
+        try:
+            ligands_in_chains, fixed_ligands = PLACER.utils.parse_fixed_ligand_input(placer_input_iter, placer_input_iter.chains)
+            print(f"{label}: Predicting {len(ligands_in_chains)} CDR residues; fixing {len(fixed_ligands)} residues")
+        except Exception:
+            pass
 
-        # execute PLACER
+        # Run PLACER
         outputs = placer.run(placer_input_iter, args.nsamples, sigma_bb=sigma_bb)
 
-        # Rank the outputs based on a user-defined metric
-        # if args.rerank is not None:
-        #     outputs = PLACER.utils.rank_outputs(outputs, args.rerank)
-
-
-        ### Save outputs to disk ###
+        # Save outputs
         os.makedirs(args.odir, exist_ok=True)
-
-        # Dump outputs
         PLACER.protocol.dump_output(output_dict=outputs, filename=outfile_prefix, rerank=args.rerank)
-
-        # save scores to CSV
-        # ignore_csv_keys = ["item", "model", "center", "Xs", "Ds", "plDDTs", "pDEVs"]
-        # df = pd.DataFrame.from_dict({k: [outputs[n][k] for n in outputs] for k in outputs[0].keys() if k not in ignore_csv_keys})
-        # df.to_csv(ocsv,index=False, mode='a', header=not os.path.exists(ocsv))
-        # print(f"Wrote scores to {ocsv}")
-
-        # # save models as a multimodel PDB
-        # opdb = args.odir+'/'+label+'_model.pdb'
-        # f = open(opdb,'w')
-        # for n in outputs:
-        #     for l in outputs[n]["model"]:
-        #         f.write(l)
-        # f.close()
-        # print(f"Wrote generated models to {opdb}")
 
     print(f"Finished predicting {len(fnames)} structures in {(time.time() - tic):.2f} seconds.")
 
 
 if __name__ == "__main__":
+    rank_options = ['prmsd', 'plddt', 'plddt_pde']
 
-    rank_options = [
-        'prmsd',
-        'plddt',
-        'plddt_pde'
-    ]
+    parser = argparse.ArgumentParser(formatter_class=argparse.ArgumentDefaultsHelpFormatter)
+    parser.add_argument('-i','--idir', type=str, help='Input folder with PDB/mmCIF files')
+    parser.add_argument('-f','--ifile', type=str, help='Single PDB/mmCIF file or file containing list of files')
+    parser.add_argument('-o','--odir', type=str, default="./", help='Output folder')
+    parser.add_argument('-n','--nsamples', type=int, default=10, help='Number of samples to generate')
+    parser.add_argument('--suffix', type=str, help='Suffix for output files')
+    parser.add_argument('--cautious', action='store_true', default=False, help='Skip if output exists')
+    parser.add_argument('--weights', type=str, default=f"{DIR}/weights/PLACER_model_1.pt", help='Weights file')
+    parser.add_argument('--cdr-file', type=str, help='CDR definition file')
+    parser.add_argument('--predict_multi', action='store_true', default=False)
+    parser.add_argument('--fixed_ligand', nargs="+", type=str)
+    parser.add_argument('--predict_ligand', nargs="+", type=str)
+    parser.add_argument('--exclude_common_ligands', action='store_true', default=False)
+    parser.add_argument('--ignore_ligand_hydrogens', action='store_true', default=False)
+    parser.add_argument('--use_sm', action='store_true', default=True)
+    parser.add_argument('--no-use_sm', dest='use_sm', action='store_false')
+    parser.add_argument('--target_res', type=str)
+    parser.add_argument('--bonds', nargs="+", type=str)
+    parser.add_argument('--mutate', nargs="+", type=str)
+    parser.add_argument('--crop_centers', nargs="+", type=str)
+    parser.add_argument('--corruption_centers', nargs="+", type=str)
+    parser.add_argument('--residue_json', type=str)
+    parser.add_argument('--fixed_ligand_noise', type=float)
+    parser.add_argument('--maxatoms', type=int)
+    parser.add_argument('--ligand_file', nargs="+", type=str)
+    parser.add_argument('--rerank', type=str, choices=rank_options)
 
-    argparser = argparse.ArgumentParser(formatter_class=argparse.ArgumentDefaultsHelpFormatter)
-    argparser.add_argument('-i','--idir', type=str, required=False, help='input folder with PDB/mmCIF files')
-    argparser.add_argument('-f','--ifile', type=str, required=False, help='file with a list of input PDB/mmCIF files or a single PDB/mmCIF file. Only mmCIF files from RCSB are correctly parsed.')
-    argparser.add_argument('-o','--odir', type=str, required=False, default="./", help='output folder to save models and CSV files. Default is current run directory.')
-    argparser.add_argument('-n','--nsamples', type=int, default=10, help='number of samples to generate. 50-100 is a good number in most cases.')
-    argparser.add_argument('--ocsv', type=str, required=False, help='output .csv file to save scores. By default the CSV name is inferred from the input file name, with --suffix input added.')
-    argparser.add_argument('--suffix', type=str, required=False, help='suffix added to output PDB file')
-    argparser.add_argument('--cautious', action="store_true", default=False, help='Cautious mode. If output CSV exists, then will not run that prediction again.')
-    argparser.add_argument('--exclude_common_ligands', action="store_true", default=False, help='All common solvents and crystallography additivies will be excluded from the prediction. '
-                                                                                                'List of residues was obtained from AlphaFold3 supplementary data (DOI: 10.1038/s41586-024-07487-w). '
-                                                                                                'Useful when predicting directly any crystal structures.')
-    argparser.add_argument('--predict_multi', action="store_true", default=False, help='All allowed ligands in input will be predicted and scored. fixed_ligand and predict_ligand inputs are respected.')
-    argparser.add_argument('--fixed_ligand', type=str, nargs="+", required=False, help='Ligand <name3> or <name3-resno> or <chain-name3-resno> that will remain fixed.')
-    argparser.add_argument('--predict_ligand', type=str, nargs="+", required=False, help='Ligand <name3> or <name3-resno> or <chain-name3-resno> that will be predicted. All other ligands will be fixed.')
-    argparser.add_argument('--target_res', type=str, required=False, help='Protein residue <chain-resno> or <chain-name3-resno> that will be used as crop center. Required when input has no ligands.')
-    argparser.add_argument('--fixed_ligand_noise', type=float, required=False, help='Noise added to fixed ligand coordinates. Default is the same as backbone atom `sigma_bb` in the model params.')
-    argparser.add_argument('--weights', type=str, required=False, default=f"{DIR}/weights/PLACER_model_1.pt", help=f'Weights file (pytorch .pt file).')
-
-    argparser.add_argument('--rerank', type=str, required=False, choices=rank_options, help='Output CSV and PDB models files are ranked from best to worst based on one of the input metrics: prmsd, plddt, plddt_pde. '
-                           'Prmsd is sorted in ascending order; plddt and plddt_pde in descending order. The model numbers that are printed to screen while the script runs no longer apply.')
-
-    argparser.add_argument('--bonds', type=str, required=False, nargs="+", help='put a bond between two atoms, e.g. "A-42-ALA-CB:B-173-JRP-CL:<bondlen>", as space-separated list')
-    argparser.add_argument('--mutate', type=str, required=False, nargs="+", help='mutate certain positions, e.g. "5A:TRP" or "5A:TRP 6A:GLY"')
-    argparser.add_argument('--crop_centers', type=str, required=False, nargs="+", help='Atom names that will be used as CROP centers. This centers the crop to a particular part of the pocket, '
-                                                                                'but the ligands are still corrupted based on their input coordinates. Used for refining where the cropped sphere is. '
-                                                                                'This DOES NOT affect which atoms/ligands are selected for prediction. Use --predict_ligand ... for that. '
-                                                                                'One atom will be picked randomly from the provided set. '
-                                                                                'XYZ coordinate input available in the API. Example: "B-200-HEM-FE B-200-HEM-O1"')
-    argparser.add_argument('--corruption_centers', type=str, required=False, nargs="+", help='Atom names that will be used as corruption centers. Allows sampling the ligand around in the whole protein. '
-                                                                                'One will be picked randomly from the provided set. Must provide at least as many centers as there are ligands in the input. '
-                                                                                'XYZ coordinate input available in the API. Example: "B-200-HEM-FE B-200-HEM-O1"')
-    argparser.add_argument('--residue_json', type=str, required=False, help='JSON file that specifies any custom residues used in the PDB, or used with --mutate. These are added to the internal CCD library.\n'
-                           "JSON format:\n{name3: {'sdf': <contents of SDF file as string>,\n"
-                           "'atom_id': [atom names],\n"
-                           "'leaving': [True/False for whether this atom is deleted when part of polymer],\n"
-                           "'pdbx_align': [empty list]}}")
-    argparser.add_argument('--maxatoms', type=int, required=False, default=None, help='Override the maximum number of heavy atoms in the crop region (default is 600, increase for large CDR/epitope modeling).')
-    argparser.add_argument('--ligand_file', type=str, nargs="+", help='SDF or MOL2 file of the ligand(s). (Input format: XXX:ligand1.sdf YYY:ligand2.mol2) ZZZ:CCD\n '
-                                                                  'Used for refining the atom typing and connectivity in the ligand structures. '
-                                                                  'Coordinates are still parsed form the input PDB/mmCIF. If ligand exists in CCD then ZZZ:CCD is a special input that enables reading the ligand in from an internal CCD ligands database.')
-    argparser.add_argument('--ignore_ligand_hydrogens', action='store_true', default=False, help='Affects --ligand_file. Ignores hydrogen atoms that are defined in the PDB and SDF/MOL2 files, and will not throw errors if the protonation states are different. Hydrogen atoms are not predicted with PLACER anyway.')
-    argparser.add_argument('--use_sm', action='store_true',default=True, help='make predictions with the small molecule (holo - turned on by default)')
-    argparser.add_argument('--no-use_sm', dest='use_sm', action='store_false', default=False,help='make predictions w/o the small molecule (apo)')
-    argparser.set_defaults(use_sm=True)
-    argparser.add_argument('--poly-ligand-chains', nargs='+', type=str, help="Chain IDs (e.g. A B) to treat as polymeric ligands for CDR loop optimization")
-    argparser.add_argument('--cdr-file', type=str, help="File defining CDR residue numbers for each chain (format: 'chain:res1,res2,...')")
-    args = argparser.parse_args()
-
-
-
+    args = parser.parse_args()
     main(args)
