@@ -174,9 +174,11 @@ def main(args):
         try:
             chain_stats = []
             chains = placer_input_iter.chains
+            fixed = placer_input_iter.fixed_ligand() or []
             for ch in chains:
                 cdr_count = len(placer_input_iter.cdr_residues().get(ch, []))
-                fixed_count = len(placer_input_iter.fixed_ligand() or [])
+                fixed_count = len([f for f in fixed if f[0] == ch])
+
                 chain_stats.append({
                     "label": label,
                     "chain": ch,
