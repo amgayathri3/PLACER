@@ -236,6 +236,13 @@ if __name__ == "__main__":
     parser.add_argument('--ligand_file', nargs="+", type=str)
     parser.add_argument('--rerank', type=str, choices=rank_options)
     parser.add_argument('--stats_csv', type=str, help='CSV file to save per-chain CDR/fixed statistics')
+    parser.add_argument(
+    '--poly-ligand-chains',
+    nargs='+',
+    type=str,
+    default=None,
+    help='Chains treated as polymer ligands (e.g. antibody chains)'
+)
 
     args = parser.parse_args()
     main(args)
