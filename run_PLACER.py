@@ -70,9 +70,6 @@ def main(args):
     if not args.use_sm:
         placer_input.exclude_sm(True)
 
-    if args.poly_ligand_chains is not None:
-        placer_input.poly_ligand_chains(args.poly_ligand_chains)
-
     if args.fixed_ligand_noise is not None:
         placer_input.fixed_ligand_noise(args.fixed_ligand_noise)
 
