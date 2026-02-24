@@ -27,6 +27,13 @@ def main(args):
     weightsfile = args.weights
 
     placer = PLACER.PLACER(weightsfile)
+    if args.maxatoms is not None:
+        placer._PLACER__params['DATALOADER']['featurizer']['maxatoms'] = args.maxatoms
+    try:
+        crop_size = placer._PLACER__params['DATALOADER']['featurizer']['maxatoms']
+        print(f"Crop size set to: {crop_size}")
+    except (KeyError, AttributeError, TypeError):
+        print("Crop size: default")
 
 
     ########################################################
@@ -273,6 +280,7 @@ if __name__ == "__main__":
                                                                   'Coordinates are still parsed form the input PDB/mmCIF. If ligand exists in CCD then ZZZ:CCD is a special input that enables reading the ligand in from an internal CCD ligands database.')
     argparser.add_argument('--ignore_ligand_hydrogens', action='store_true', default=False, help='Affects --ligand_file. Ignores hydrogen atoms that are defined in the PDB and SDF/MOL2 files, and will not throw errors if the protonation states are different. Hydrogen atoms are not predicted with PLACER anyway.')
     argparser.add_argument('--use_sm', action='store_true',default=True, help='make predictions with the small molecule (holo - turned on by default)')
+    argparser.add_argument('--maxatoms', type=int, required=False, default=None, help='Override the maximum number of heavy atoms in the crop region (default is 600, increase for large CDR/epitope modeling).')
     argparser.add_argument('--no-use_sm', dest='use_sm', action='store_false', default=False,help='make predictions w/o the small molecule (apo)')
     argparser.set_defaults(use_sm=True)
     args = argparser.parse_args()
